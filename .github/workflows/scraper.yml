@@ -1,0 +1,38 @@
+name: Run OrderMonk Scraper
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # Daily at 2AM UTC
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  scrape-and-save:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Scraper
+        env:
+          GOOGLE_GEMINI_API_KEY: ${{ secrets.GOOGLE_GEMINI_API_KEY }}
+        run: |
+          python main.py
+
+      - name: Commit and Push Results
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add tracker.json keyword_mappings/
+          # Only commit if there are changes
+          git diff --staged --quiet || git commit -m "Automated scraper log sync: $(date +'%Y-%m-%d %H:%M:%S')"
+          git push
