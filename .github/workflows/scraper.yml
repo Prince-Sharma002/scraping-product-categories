@@ -2,35 +2,52 @@ name: Run OrderMonk Scraper
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # Every 6 hours
-  workflow_dispatch:      # Manual trigger
+    - cron: "0 */6 * * *"   # Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+  workflow_dispatch:         # Manual trigger from GitHub UI
 
 jobs:
   scrape-and-save:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours timeout for long-running categories
-    
+    timeout-minutes: 360     # 6 hours max (covers long batches)
+
     steps:
+      # ── 1. Pull the latest code (including pending/ txt files)
       - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/checkout@v4
         with:
-          python-version: '3.9'
+          fetch-depth: 0     # Full history needed for git push
 
+      # ── 2. Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'       # Cache pip deps → faster runs
+
+      # ── 3. Install dependencies (MUST happen before running main.py)
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Run the scraper
       - name: Run Scraper
         env:
           OXYLABS_USER: ${{ secrets.OXYLABS_USER }}
           OXYLABS_PASS: ${{ secrets.OXYLABS_PASS }}
-        run: |
-          python main.py
+        run: python main.py
 
+      # ── 5. Commit and push results (scraped/ moves + audit_log.json)
       - name: Commit and Push Results
         run: |
-          git config --global user.name "GitHub Actions"
+          git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
-          git add tracker.json keyword_mappings/ input_keywords/
-          # Only commit if there are changes
-          git diff --staged --quiet || git commit -m "Automated scraper log sync: $(date +'%Y-%m-%d %H:%M:%S')"
-          git push
+
+          # Stage: moved files in scraped/, failed/, and audit log
+          git add input_keywords/scraped/ input_keywords/failed/ audit_log.json || true
+
+          # Only commit if something actually changed
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to commit (no files were processed this run)."
+          else
+            git commit -m "🤖 Auto-scrape: $(date +'%Y-%m-%d %H:%M') UTC"
+            git push
+          fi
