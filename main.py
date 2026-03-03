@@ -1,119 +1,224 @@
 import os
 import json
 import time
+import shutil
 import subprocess
 import re
 from datetime import datetime
 
-TRACKER_FILE = "tracker.json"
-INPUT_DIR = "input_keywords"
-KEYWORD_MAPPINGS_DIR = "keyword_mappings"
+# ─────────────────────────────────────────────────────────────
+#  CONFIGURATION
+# ─────────────────────────────────────────────────────────────
+BASE_INPUT_DIR      = "input_keywords"          # Root keyword folder
+PENDING_DIR         = os.path.join(BASE_INPUT_DIR, "pending")    # 🔵 Not yet scraped
+SCRAPED_DIR         = os.path.join(BASE_INPUT_DIR, "scraped")    # ✅ Successfully scraped
+FAILED_DIR          = os.path.join(BASE_INPUT_DIR, "failed")     # ❌ Scrape failed (retry later)
 
-os.makedirs(INPUT_DIR, exist_ok=True)
-os.makedirs(KEYWORD_MAPPINGS_DIR, exist_ok=True)
+KEYWORD_MAPPINGS_DIR = "keyword_mappings"       # JSON snapshots per category
+AUDIT_LOG_FILE       = "audit_log.json"         # Rich audit trail (optional, lightweight)
 
-def load_tracker():
-    if os.path.exists(TRACKER_FILE):
-        with open(TRACKER_FILE, "r", encoding="utf-8") as f:
+BATCH_SIZE = 5                                  # Max files to process per run
+
+# ─────────────────────────────────────────────────────────────
+#  BOOTSTRAP DIRECTORIES
+# ─────────────────────────────────────────────────────────────
+for d in [PENDING_DIR, SCRAPED_DIR, FAILED_DIR, KEYWORD_MAPPINGS_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────
+#  AUDIT LOG  (replaces tracker.json for status tracking)
+#  Stores only SUCCESS/FAILURE records for history — not used
+#  for loop decisions (filesystem folders do that job now).
+# ─────────────────────────────────────────────────────────────
+def load_audit_log() -> dict:
+    if os.path.exists(AUDIT_LOG_FILE):
+        with open(AUDIT_LOG_FILE, "r", encoding="utf-8") as f:
             try:
                 return json.load(f)
             except json.JSONDecodeError:
                 return {}
     return {}
 
-def save_tracker(data):
-    with open(TRACKER_FILE, "w", encoding="utf-8") as f:
+
+def save_audit_log(data: dict):
+    with open(AUDIT_LOG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
-def run_scraper(keyword_file_path):
-    print(f"  🚀 Running scraper for file: {keyword_file_path}")
-    if os.name == 'nt':
+
+# ─────────────────────────────────────────────────────────────
+#  SCRAPER RUNNER
+# ─────────────────────────────────────────────────────────────
+def run_scraper(keyword_file_path: str) -> bool:
+    """Invoke scraper.sh with the given keyword file. Returns True on success."""
+    print(f"  🚀 Running scraper for: {keyword_file_path}")
+    if os.name == "nt":
         git_bash_path = r"C:\Program Files\Git\bin\bash.exe"
-        cmd = [git_bash_path, "scraper.sh", keyword_file_path] if os.path.exists(git_bash_path) else ["bash", "scraper.sh", keyword_file_path]
+        if os.path.exists(git_bash_path):
+            cmd = [git_bash_path, "scraper.sh", keyword_file_path]
+        else:
+            cmd = ["bash", "scraper.sh", keyword_file_path]
     else:
         os.chmod("scraper.sh", 0o755)
         cmd = ["./scraper.sh", keyword_file_path]
-        
+
     result = subprocess.run(cmd)
     return result.returncode == 0
 
+
+# ─────────────────────────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────────────────────────
+def move_file(src: str, dest_dir: str) -> str:
+    """Move src file into dest_dir. Returns the new path."""
+    dest_path = os.path.join(dest_dir, os.path.basename(src))
+    # If a file with the same name already exists in dest, add timestamp suffix
+    if os.path.exists(dest_path):
+        name, ext = os.path.splitext(os.path.basename(src))
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dest_path = os.path.join(dest_dir, f"{name}__{timestamp}{ext}")
+    shutil.move(src, dest_path)
+    return dest_path
+
+
+def save_keyword_mapping(category_name: str, keywords: list) -> str:
+    """Persist a JSON snapshot of keywords for this category. Returns filepath."""
+    safe_name = re.sub(r"[^A-Za-z0-9]", "_", category_name)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"{timestamp}_{safe_name}.json"
+    filepath = os.path.join(KEYWORD_MAPPINGS_DIR, filename)
+    data = {
+        "category": category_name,
+        "keywords_count": len(keywords),
+        "mapped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "keywords": keywords,
+    }
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+    return filepath
+
+
+def print_summary(audit: dict):
+    """Print a quick stats block at the end of every run."""
+    total_scraped = sum(1 for v in audit.values() if v.get("status") == "scraped")
+    total_failed  = sum(1 for v in audit.values() if v.get("status") == "failed")
+    pending_count = len(os.listdir(PENDING_DIR))
+    scraped_count = len(os.listdir(SCRAPED_DIR))
+    failed_count  = len(os.listdir(FAILED_DIR))
+
+    print("\n" + "=" * 60)
+    print("📊  Run Summary")
+    print("=" * 60)
+    print(f"  📁 pending/  → {pending_count} file(s) remaining")
+    print(f"  ✅ scraped/  → {scraped_count} file(s) done")
+    print(f"  ❌ failed/   → {failed_count} file(s) to retry")
+    print(f"  📜 Audit log → {total_scraped} scraped | {total_failed} failed (all-time)")
+    print("=" * 60)
+
+
+# ─────────────────────────────────────────────────────────────
+#  MAIN
+# ─────────────────────────────────────────────────────────────
 def main():
     print("=" * 60)
-    print("🤖 OrderMonk Scraper - Processing Manual Keyword Files")
+    print("🤖  OrderMonk Scraper — Folder-Based Workflow")
     print("=" * 60)
 
-    tracker = load_tracker()
+    # ── Migrate legacy files: if any .txt files sit directly in
+    #    input_keywords/ (old layout) move them to pending/ first
+    legacy_files = [
+        f for f in os.listdir(BASE_INPUT_DIR)
+        if f.endswith(".txt") and os.path.isfile(os.path.join(BASE_INPUT_DIR, f))
+    ]
+    if legacy_files:
+        print(f"\n⚙️  Migrating {len(legacy_files)} legacy file(s) → pending/")
+        for lf in legacy_files:
+            shutil.move(os.path.join(BASE_INPUT_DIR, lf), os.path.join(PENDING_DIR, lf))
+            print(f"   ↳ {lf}")
 
-    files_to_process = [f for f in os.listdir(INPUT_DIR) if f.endswith('.txt')]
+    # ── Discover only PENDING files — O(1) filesystem call, no JSON scan
+    pending_files = sorted(
+        f for f in os.listdir(PENDING_DIR) if f.endswith(".txt")
+    )
 
-    if not files_to_process:
-        print(f"No keyword files found in '{INPUT_DIR}/'.")
-        print("Please add a .txt file named after the category (e.g., 'Premium Face Wash.txt') with keywords line-by-line.")
+    if not pending_files:
+        print(f"\n✅ No pending keyword files in '{PENDING_DIR}/'.")
+        print("   Add a .txt file named after the category to start scraping.")
+        print_summary(load_audit_log())
         return
 
-    processed_count = 0
-    BATCH_SIZE = 5 # Limit per run if you add a lot
+    print(f"\n📋 Found {len(pending_files)} pending file(s). Processing up to {BATCH_SIZE} this run.\n")
 
-    for file_name in files_to_process:
+    audit = load_audit_log()
+    processed_count = 0
+
+    for file_name in pending_files:
         if processed_count >= BATCH_SIZE:
-             print("\nReached batch size limit. The workflow will pick up the rest on the next run!")
-             break
+            print(f"\n⏸️  Batch limit ({BATCH_SIZE}) reached. Remaining files stay in pending/ for next run.")
+            break
 
         category_name = file_name.replace(".txt", "").strip()
-        filepath = os.path.join(INPUT_DIR, file_name)
+        src_path = os.path.join(PENDING_DIR, file_name)
 
-        if category_name not in tracker:
-             tracker[category_name] = {"status": "unscraped"}
-        
-        info = tracker[category_name]
+        print(f"─" * 60)
+        print(f"📂 [{processed_count + 1}/{min(BATCH_SIZE, len(pending_files))}] Processing: '{category_name}'")
 
-        if isinstance(info, dict) and info.get("status") == "scraped":
-             print(f"\n⏭️ Skipping '{category_name}' (Already scraped!)")
-             continue
-
-        print(f"\n📂 Processing Category: '{category_name}' from {file_name}")
-
-        # Count keywords for summary
-        with open(filepath, "r", encoding="utf-8") as f:
+        # Read keywords
+        with open(src_path, "r", encoding="utf-8") as f:
             keywords = [line.strip() for line in f if line.strip()]
 
-        print(f"  ✅ Found {len(keywords)} keywords to scrape.")
+        if not keywords:
+            print(f"  ⚠️  File is empty — moving to failed/ to avoid repeat processing.")
+            new_path = move_file(src_path, FAILED_DIR)
+            audit[category_name] = {
+                "status": "failed",
+                "reason": "empty file",
+                "failed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "file": new_path,
+            }
+            save_audit_log(audit)
+            processed_count += 1
+            continue
 
-        # Trigger Scraper passing the file directly
-        success = run_scraper(filepath)
+        print(f"  📝 {len(keywords)} keyword(s) found.")
+
+        # ── Run the scraper
+        success = run_scraper(src_path)
 
         if success:
-            tracker[category_name]["status"] = "scraped"
-            tracker[category_name]["scraped_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Save mapping optionally
-            safe_name = re.sub(r'[^A-Za-z0-9]', '_', category_name)
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            keywords_filename = f"{timestamp}_{safe_name}.json"
-            
-            mapping_filepath = os.path.join(KEYWORD_MAPPINGS_DIR, keywords_filename)
-            keyword_data = {
-                "category": category_name,
+            # 1. Save keyword mapping JSON
+            mapping_path = save_keyword_mapping(category_name, keywords)
+
+            # 2. Move .txt → scraped/  (this is how we know it's done — no JSON lookup needed)
+            new_path = move_file(src_path, SCRAPED_DIR)
+
+            # 3. Update audit log
+            audit[category_name] = {
+                "status": "scraped",
+                "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "keywords_count": len(keywords),
-                "mapped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "keywords": list(keywords)
+                "keywords_file": mapping_path,
+                "scraped_txt": new_path,
             }
-            
-            with open(mapping_filepath, "w", encoding="utf-8") as map_file:
-                json.dump(keyword_data, map_file, indent=4)
-                
-            tracker[category_name]["keywords_file"] = mapping_filepath
-            save_tracker(tracker)
-            print(f"  ✅ '{category_name}' successfully marked as SCRAPED.")
+            save_audit_log(audit)
+            print(f"  ✅ Done! Moved → scraped/{os.path.basename(new_path)}")
         else:
-            print(f"  ❌ Scraper failed for '{category_name}'. Status remains UNSCRAPED.")
-            
+            # Move .txt → failed/ so operators can inspect and retry
+            new_path = move_file(src_path, FAILED_DIR)
+            audit[category_name] = {
+                "status": "failed",
+                "failed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "keywords_count": len(keywords),
+                "failed_txt": new_path,
+            }
+            save_audit_log(audit)
+            print(f"  ❌ Scraper failed! Moved → failed/{os.path.basename(new_path)}")
+
         processed_count += 1
         time.sleep(3)
 
-    print("\n" + "=" * 60)
-    print("📊 Daily Run Complete!")
-    print("=" * 60)
+    print_summary(audit)
+
 
 if __name__ == "__main__":
     main()
