@@ -2,12 +2,13 @@ name: Run OrderMonk Scraper
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # Daily at 2AM UTC
+    - cron: "0 */6 * * *"   # Every 6 hours
   workflow_dispatch:      # Manual trigger
 
 jobs:
   scrape-and-save:
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours timeout for long-running categories
     
     steps:
       - name: Checkout Code
@@ -19,6 +20,9 @@ jobs:
           python-version: '3.9'
 
       - name: Run Scraper
+        env:
+          OXYLABS_USER: ${{ secrets.OXYLABS_USER }}
+          OXYLABS_PASS: ${{ secrets.OXYLABS_PASS }}
         run: |
           python main.py
 

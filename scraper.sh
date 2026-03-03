@@ -9,8 +9,8 @@
 
 set -euo pipefail
 
-OXYLABS_USER="prince_123_o6lXi"
-OXYLABS_PASS="Albert5050prince+"
+OXYLABS_USER="${OXYLABS_USER:-prince_123_o6lXi}"
+OXYLABS_PASS="${OXYLABS_PASS:-Albert5050prince+}"
 INGEST_URL="https://api.ordermonk.com/api/ingest/bulk-products"
 DOMAIN="in"            # Amazon domain: in, com, co.uk, de
 PAGES_PER_KEYWORD=10   # Pages to scrape per keyword (10 pages ≈ 500 products)
