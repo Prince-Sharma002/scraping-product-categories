@@ -44,6 +44,8 @@ START_TIME=$(date +%s)
 
 for i in "${!KEYWORDS[@]}"; do
   keyword="${KEYWORDS[$i]}"
+  # Strip carriage return (\r) if the file has Windows line endings
+  keyword="${keyword//$'\r'/}"
   # Skip empty lines
   if [ -z "$keyword" ]; then continue; fi
 

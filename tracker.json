@@ -18,15 +18,15 @@
         "generated_keywords": []
     },
     "Advanced Face Wash": {
-        "status": "unscraped",
-        "keywords_file": null,
-        "scraped_at": null,
+        "status": "scraped",
+        "keywords_file": "keyword_mappings\\2026-03-03_14-18-33_Advanced_Face_Wash.json",
+        "scraped_at": "2026-03-03 14:18:33",
         "generated_keywords": []
     },
     "Beginner Face Wash": {
-        "status": "unscraped",
-        "keywords_file": null,
-        "scraped_at": null,
+        "status": "scraped",
+        "keywords_file": "keyword_mappings\\2026-03-03_14-19-22_Beginner_Face_Wash.json",
+        "scraped_at": "2026-03-03 14:19:22",
         "generated_keywords": []
     },
     "Portable Face Wash": {
