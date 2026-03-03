@@ -33,6 +33,9 @@ jobs:
         env:
           OXYLABS_USER: ${{ secrets.OXYLABS_USER }}
           OXYLABS_PASS: ${{ secrets.OXYLABS_PASS }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          ALERT_EMAIL_PASS: ${{ secrets.ALERT_EMAIL_PASS }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
         run: python main.py
 
       # ── 5. Commit and push results (scraped/ moves + audit_log.json)

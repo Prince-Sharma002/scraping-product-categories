@@ -4,7 +4,13 @@ import time
 import shutil
 import subprocess
 import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ─────────────────────────────────────────────────────────────
 #  CONFIGURATION
@@ -20,10 +26,63 @@ AUDIT_LOG_FILE       = "audit_log.json"         # Rich audit trail (optional, li
 BATCH_SIZE = 5                                  # Max files to process per run
 
 # ─────────────────────────────────────────────────────────────
+#  EMAIL ALERT CONFIGURATION  (loaded from .env / GitHub Secrets)
+# ─────────────────────────────────────────────────────────────
+ALERT_FROM_EMAIL = os.getenv("ALERT_EMAIL")          # Gmail address that sends alerts
+ALERT_EMAIL_PASS = os.getenv("ALERT_EMAIL_PASS")     # Gmail App Password (NOT your login password)
+# Comma-separated list of recipients, e.g. "a@gmail.com,b@gmail.com"
+_raw_to           = os.getenv("ALERT_TO_EMAIL", ALERT_FROM_EMAIL or "")
+ALERT_TO_EMAILS  = [e.strip() for e in _raw_to.split(",") if e.strip()]
+
+# ─────────────────────────────────────────────────────────────
 #  BOOTSTRAP DIRECTORIES
 # ─────────────────────────────────────────────────────────────
-for d in [PENDING_DIR, SCRAPED_DIR, FAILED_DIR, KEYWORD_MAPPINGS_DIR]:
+for d in [PENDING_DIR, SCRAPED_DIR, FAILED_DIR, KEYWORD_MAPPINGS_DIR]:  # type: ignore
     os.makedirs(d, exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────
+#  EMAIL ALERT SENDER
+# ─────────────────────────────────────────────────────────────
+def send_alert_email(category_name: str, reason: str, details: str = ""):
+    """
+    Send a failure alert email via Gmail SMTP.
+    Silently skips if email credentials are not configured.
+    """
+    if not ALERT_FROM_EMAIL or not ALERT_EMAIL_PASS or not ALERT_TO_EMAILS:
+        print("  ⚠️  Email alert skipped (ALERT_EMAIL / ALERT_EMAIL_PASS / ALERT_TO_EMAIL not set).")
+        return
+
+    subject = f"❌ OrderMonk Scraper FAILED — {category_name}"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    body = f"""\
+<html><body style="font-family:Arial,sans-serif;color:#333;">
+<h2 style="color:#cc0000;">❌ Scraping Failure Alert</h2>
+<table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:600px;">
+  <tr style="background:#f5f5f5;"><td><b>Category</b></td><td>{category_name}</td></tr>
+  <tr><td><b>Reason</b></td><td>{reason}</td></tr>
+  <tr style="background:#f5f5f5;"><td><b>Time</b></td><td>{timestamp}</td></tr>
+  <tr><td><b>Details</b></td><td>{details if details else 'N/A'}</td></tr>
+  <tr style="background:#f5f5f5;"><td><b>Retry</b></td><td>Move the .txt file from <code>failed/</code> back to <code>pending/</code> and push to GitHub.</td></tr>
+</table>
+<p style="color:#666;font-size:12px;">— OrderMonk Auto-Scraper</p>
+</body></html>"""
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = ALERT_FROM_EMAIL
+        msg["To"]      = ", ".join(ALERT_TO_EMAILS)   # shows all recipients in To: header
+        msg.attach(MIMEText(body, "html"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+            server.login(ALERT_FROM_EMAIL, ALERT_EMAIL_PASS)
+            server.sendmail(ALERT_FROM_EMAIL, ALERT_TO_EMAILS, msg.as_string())  # list → sends to all
+
+        print(f"  📧 Alert email sent to: {', '.join(ALERT_TO_EMAILS)}")
+    except Exception as e:
+        print(f"  ⚠️  Could not send alert email: {e}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -168,7 +227,8 @@ def main():
             keywords = [line.strip() for line in f if line.strip()]
 
         if not keywords:
-            print(f"  ⚠️  File is empty — moving to failed/ to avoid repeat processing.")
+            reason = "File is empty — no keywords to scrape"
+            print(f"  ⚠️  {reason}. Moving to failed/")
             new_path = move_file(src_path, FAILED_DIR)
             audit[category_name] = {
                 "status": "failed",
@@ -177,6 +237,7 @@ def main():
                 "file": new_path,
             }
             save_audit_log(audit)
+            send_alert_email(category_name, reason, f"File moved to: {new_path}")
             processed_count += 1
             continue
 
@@ -213,6 +274,11 @@ def main():
             }
             save_audit_log(audit)
             print(f"  ❌ Scraper failed! Moved → failed/{os.path.basename(new_path)}")
+            send_alert_email(
+                category_name,
+                reason="scraper.sh returned non-zero exit code",
+                details=f"Keywords: {len(keywords)} | File moved to: {new_path}",
+            )
 
         processed_count += 1
         time.sleep(3)
