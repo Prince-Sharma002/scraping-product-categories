@@ -44,8 +44,10 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
 
-          # Stage: moved files in scraped/, failed/, and audit log
-          git add input_keywords/scraped/ input_keywords/failed/ audit_log.json || true
+          # Stage ALL changes inside input_keywords/ — this captures:
+          #   ✅ new files added in scraped/ and failed/
+          #   ✅ deleted files removed from pending/  ← this was the missing piece
+          git add input_keywords/ audit_log.json || true
 
           # Only commit if something actually changed
           if git diff --staged --quiet; then
