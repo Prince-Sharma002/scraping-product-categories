@@ -31,6 +31,7 @@ jobs:
       # ── 4. Run the scraper
       - name: Run Scraper
         env:
+          GOOGLE_GEMINI_API_KEY: ${{ secrets.GOOGLE_GEMINI_API_KEY }}
           OXYLABS_USER: ${{ secrets.OXYLABS_USER }}
           OXYLABS_PASS: ${{ secrets.OXYLABS_PASS }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}

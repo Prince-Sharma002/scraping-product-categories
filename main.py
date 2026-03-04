@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dotenv import load_dotenv
+import csv
 
 load_dotenv()
 
@@ -83,6 +84,40 @@ def send_alert_email(category_name: str, reason: str, details: str = ""):
         print(f"  📧 Alert email sent to: {', '.join(ALERT_TO_EMAILS)}")
     except Exception as e:
         print(f"  ⚠️  Could not send alert email: {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+#  GEMINI KEYWORD GENERATOR
+# ─────────────────────────────────────────────────────────────
+def generate_keywords_with_gemini(category_name: str) -> list:
+    """Uses Gemini API to generate exactly 4 search keywords for a category."""
+    try:
+        from google import genai
+        
+        api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
+        if not api_key:
+            print("      ⚠️  GOOGLE_GEMINI_API_KEY not found in environment.")
+            return []
+            
+        client = genai.Client(api_key=api_key)
+        prompt = (f"Generate a comprehensive list of at least 120 highly relevant and diverse search keywords/phrases to find "
+                  f"'{category_name}' products on Amazon. Include variations, sub-categories, specific brands, "
+                  f"use cases, features, and long-tail keywords.\n"
+                  f"Return ONLY the keywords, one per line.\n"
+                  f"No numbers, no bullet points, no asterisks, no extra text.")
+                  
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        # Clean lines
+        lines = [line.strip().lstrip("*-1234567890. ") for line in response.text.split('\n')]
+        keywords = [line for line in lines if line]
+        return keywords
+        
+    except Exception as e:
+        print(f"      ⚠️  Gemini Error: {e}")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────
@@ -195,20 +230,68 @@ def main():
             shutil.move(os.path.join(BASE_INPUT_DIR, lf), os.path.join(PENDING_DIR, lf))
             print(f"   ↳ {lf}")
 
-    # ── Discover only PENDING files — O(1) filesystem call, no JSON scan
-    pending_files = sorted(
-        f for f in os.listdir(PENDING_DIR) if f.endswith(".txt")
-    )
+    # ── 1. Discover existing PENDING files
+    pending_files = sorted(f for f in os.listdir(PENDING_DIR) if f.endswith(".txt"))
 
+    # ── 2. Auto-Generate missing pending files if under BATCH_SIZE
+    audit = load_audit_log()
+    if len(pending_files) < BATCH_SIZE:
+        csv_path = "ultra_deep_marketplace_taxonomy_1000_plus.csv"
+        target_new = BATCH_SIZE - len(pending_files)
+        
+        if os.path.exists(csv_path):
+            print(f"\n✨ Currently {len(pending_files)} pending file(s). Auto-generating {target_new} more using Gemini...")
+            generated_count = 0
+            try:
+                with open(csv_path, "r", encoding="utf-8") as csvfile:
+                    reader = csv.reader(csvfile)
+                    next(reader, None)  # skip header
+                    for row in reader:
+                        if len(row) >= 4:
+                            cat = row[3].strip()
+                            # skip if already scraped in audit log
+                            if cat in audit and audit[cat].get("status") == "scraped":
+                                continue
+                            
+                            # skip if a file already exists in any subfolder
+                            if (os.path.exists(os.path.join(PENDING_DIR, f"{cat}.txt")) or 
+                                os.path.exists(os.path.join(SCRAPED_DIR, f"{cat}.txt")) or 
+                                os.path.exists(os.path.join(FAILED_DIR, f"{cat}.txt"))):
+                                continue
+                                
+                            # Safe to generate!
+                            print(f"  🧠 Generating keywords for '{cat}'...")
+                            keywords = generate_keywords_with_gemini(cat)
+                            
+                            if keywords:
+                                target_path = os.path.join(PENDING_DIR, f"{cat}.txt")
+                                with open(target_path, "w", encoding="utf-8") as f:
+                                    f.write("\n".join(keywords) + "\n")
+                                print(f"      ↳ Saved {len(keywords)} keywords to pending/")
+                                generated_count += 1
+                                
+                                if generated_count >= target_new:
+                                    break
+                                time.sleep(1) # Safety delay
+                            else:
+                                print(f"      ↳ Failed to generate keywords, skipping.")
+                                
+            except Exception as e:
+                print(f"  ⚠️  Error reading taxonomy CSV or generating: {e}")
+                
+            # Re-fetch pending files list after generation:
+            pending_files = sorted(f for f in os.listdir(PENDING_DIR) if f.endswith(".txt"))
+        else:
+            print(f"\n⚠️  Taxonomy CSV '{csv_path}' not found. Cannot auto-generate.")
+
+    # ── 3. Check what we have now to process
     if not pending_files:
-        print(f"\n✅ No pending keyword files in '{PENDING_DIR}/'.")
-        print("   Add a .txt file named after the category to start scraping.")
-        print_summary(load_audit_log())
+        print(f"\n✅ No pending keyword files and no un-scraped categories left in CSV.")
+        print_summary(audit)
         return
 
     print(f"\n📋 Found {len(pending_files)} pending file(s). Processing up to {BATCH_SIZE} this run.\n")
 
-    audit = load_audit_log()
     processed_count = 0
 
     for file_name in pending_files:
