@@ -41,15 +41,21 @@ echo "=============================="
 git config user.email "${GIT_EMAIL}"
 git config user.name "${GIT_NAME}"
 
-# Stage changes: moved files in scraped/, failed/, and the audit log
-git add input_keywords/scraped/ input_keywords/failed/ audit_log.json 2>/dev/null || true
+# Pull latest changes from the remote repo to ensure we have the most recent files
+# (in case another process or manual commit happened)
+git remote set-url origin "https://${GIT_TOKEN}@github.com/${GIT_REPO}.git"
+git pull origin main || true
+
+# Stage changes: moved files in scraped/, failed/, new keyword mappings, and the audit log
+# We also stage the whole input_keywords/ to catch files removed from pending/
+git add input_keywords/ keyword_mappings/ audit_log.json 2>/dev/null || true
 
 # Only commit if there are actual changes
 if git diff --cached --quiet; then
     echo "ℹ️  No changes to commit (no files were moved this run)."
 else
-    git commit -m "🤖 Auto-scrape: $(date '+%Y-%m-%d %H:%M') UTC"
-    git remote set-url origin "https://${GIT_TOKEN}@github.com/${GIT_REPO}.git"
+    # [skip render] prevents Render from infinitely triggering new builds on this push
+    git commit -m "🤖 Auto-scrape: $(date '+%Y-%m-%d %H:%M') UTC [skip render]"
     git push origin HEAD
     echo "✅ Results pushed to GitHub."
 fi
