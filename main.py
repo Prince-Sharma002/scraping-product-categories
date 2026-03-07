@@ -96,7 +96,9 @@ def generate_keywords_with_gemini(category_name: str) -> list:
         
         api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
         if not api_key:
-            print("      ⚠️  GOOGLE_GEMINI_API_KEY not found in environment.")
+            reason = "GOOGLE_GEMINI_API_KEY not found in environment"
+            print(f"      ⚠️  {reason}")
+            send_alert_email("SYSTEM", reason, "Gemini operations are halted because the API key is missing.")
             return []
             
         client = genai.Client(api_key=api_key)
@@ -116,7 +118,15 @@ def generate_keywords_with_gemini(category_name: str) -> list:
         return keywords
         
     except Exception as e:
-        print(f"      ⚠️  Gemini Error: {e}")
+        error_msg = str(e)
+        print(f"      ⚠️  Gemini Error: {error_msg}")
+        
+        # Check for API key related errors
+        if any(indicator in error_msg for indicator in ["API_KEY_INVALID", "401", "403", "invalid API key"]):
+            send_alert_email("SYSTEM", "Gemini API Key Failure", f"The Gemini API key appears invalid or expired. Error: {error_msg}")
+        else:
+            send_alert_email(category_name, "Gemini Generation Failed", f"Failed to generate keywords for '{category_name}'. Error: {error_msg}")
+            
         return []
 
 
