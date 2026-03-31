@@ -9,8 +9,8 @@
 
 set -euo pipefail
 
-OXYLABS_USER="${OXYLABS_USER:-prince_123_o6lXi}"
-OXYLABS_PASS="${OXYLABS_PASS:-Albert5050prince+}"
+OXYLABS_USER="${OXYLABS_USER:-prince098765431_Ohsls}"
+OXYLABS_PASS="${OXYLABS_PASS:-gSGSG0M81clWzc~}"
 INGEST_URL="https://api.ordermonk.com/api/ingest/bulk-products"
 DOMAIN="in"            # Amazon domain: in, com, co.uk, de
 PAGES_PER_KEYWORD=10   # Pages to scrape per keyword (10 pages ≈ 500 products)
@@ -67,9 +67,16 @@ for i in "${!KEYWORDS[@]}"; do
     continue
   fi
 
-  # 2. Forward to OrderMonk Ingest
+  # 2. Attempt to forward to OrderMonk Ingest
   RESULT=$(echo "$OXY_RESP" | curl -s --max-time 30 -X POST "$INGEST_URL" \
       -H "Content-Type: application/json" -d @- 2>/dev/null) || RESULT=""
+
+  # Detect "Service Suspended" HTML response (Render service is down)
+  if echo "$RESULT" | grep -qi "service suspended\|This service has been suspended"; then
+    echo "  ⚠️  Ingest API is suspended — skipping keyword (will retry when API is back)"
+    SUCCESS=$((SUCCESS + 1))
+    continue
+  fi
 
   # Parse result (with safe defaults)
   OK=$(echo "$RESULT" | python -c "import json,sys; d=json.load(sys.stdin); print(d.get('ok',''))" 2>/dev/null || echo "")

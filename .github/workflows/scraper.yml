@@ -48,7 +48,7 @@ jobs:
           # Stage ALL changes inside input_keywords/ — this captures:
           #   ✅ new files added in scraped/ and failed/
           #   ✅ deleted files removed from pending/  ← this was the missing piece
-          git add input_keywords/ audit_log.json || true
+          git add input_keywords/ keyword_mappings/ audit_log.json || true
 
           # Only commit if something actually changed
           if git diff --staged --quiet; then
